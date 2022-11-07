@@ -1,11 +1,13 @@
 import 'dart:async';
 
+import 'package:adminlocation/table_result.dart';
 import 'package:adminlocation/user_data.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 
+import 'custom_search.dart';
 import 'main.dart';
 
 class HomePage extends StatefulWidget {
@@ -24,23 +26,14 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  // Location location = Location();
-  // bool? _serviceEnabled;
-  // PermissionStatus? _permissionGranted;
-  // LocationData? _locationData;
-  // double? lat, lng;
-
-  // final databaseReference = FirebaseDatabase.instance.ref("users/123");
   DatabaseReference databaseReference = FirebaseDatabase.instance.ref();
   List<UserData> userData = [];
-  // create this variable
+  List<UserData> usersFiltered = [];
 
   _getPlace(lat, lng) async {
     List<Placemark> placemarks =
         await placemarkFromCoordinates(52.2165157, 6.9437819);
 
-    print(placemarks[0]);
-    // this is all you need
     Placemark placeMark = placemarks[0];
 
     String name = placeMark.name ?? '';
@@ -56,77 +49,50 @@ class _HomePageState extends State<HomePage> {
     return address;
   }
 
-  // Future<void> askLocation() async {
-  //   _serviceEnabled = await location.serviceEnabled();
-  //   if (!_serviceEnabled!) {
-  //     _serviceEnabled = await location.requestService();
-  //     if (!_serviceEnabled!) {
-  //       return;
-  //     }
-  //   }
-
-  //   _permissionGranted = await location.hasPermission();
-  //   if (_permissionGranted == PermissionStatus.denied) {
-  //     _permissionGranted = await location.requestPermission();
-  //     if (_permissionGranted != PermissionStatus.granted) {
-  //       return;
-  //     }
-  //   }
-
-  //   _locationData = await location.getLocation();
-  //   location.onLocationChanged.listen(
-  //     (LocationData locationData) {
-  //       setState(() {
-  //         lat = _locationData!.latitude;
-  //         lng = _locationData!.longitude;
-  //       });
-  //       print(lat);
-  //       print(lng);
-  //       createData(widget.user!.displayName, widget.user!.email,
-  //           _locationData!.latitude, _locationData!.longitude);
-  //     },
-  //   );
-  // }
-
+  Timer? timer;
   @override
   void initState() {
-    readData();
+    readData().then((value) => usersFiltered = userData);
+    // usersFiltered = userData;
+    timer = Timer.periodic(const Duration(seconds: 60),
+        (Timer t) => readData().then((value) => usersFiltered = userData));
     super.initState();
   }
 
   @override
   void dispose() {
-    // TODO: implement dispose
-    // askLocation();
     super.dispose();
   }
 
-  String? name, email, type, lat, lng, address;
-  void readData() {
+  Future<void> readData() async {
+    userData.clear();
     UserData user;
-    databaseReference.once().then((DatabaseEvent snapshot) {
+    databaseReference.once().then((DatabaseEvent snapshot) async {
       for (var element in snapshot.snapshot.children) {
-        element.children.forEach((val) async {
-          name = val.children.elementAt(0).value.toString().split("|")[0];
-          type = val.children.elementAt(0).value.toString().split("|")[1];
-          email = val.children.elementAt(1).value.toString();
-          lat = val.children.elementAt(2).value.toString();
-          lng = val.children.elementAt(3).value.toString();
-          address = await _getPlace(
+        for (var val in element.children) {
+          var name = val.children.elementAt(0).value.toString().split("|")[0];
+          var type = val.children.elementAt(0).value.toString().split("|")[1];
+          var email = val.children.elementAt(1).value.toString();
+          var lat = val.children.elementAt(2).value.toString();
+          var lng = val.children.elementAt(3).value.toString();
+          var address = await _getPlace(
               double.parse(lat.toString()), double.parse(lng.toString()));
+
           user = UserData(
-              name: name!,
-              email: email!,
-              type: type!,
-              lat: lat!,
-              long: lng!,
-              address: address!);
+              name: name,
+              email: email,
+              type: type,
+              lat: lat,
+              long: lng,
+              address: address);
+
           setState(() {
             userData.add(user);
           });
-        });
+        }
       }
     });
+    // print(userData);
   }
 
   void createData(name, email, lat, long) async {
@@ -141,39 +107,163 @@ class _HomePageState extends State<HomePage> {
     // });
   }
 
+  TextEditingController controller = TextEditingController();
+  String _searchResult = '';
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.user!.displayName!),
+        actions: <Widget>[
+          IconButton(
+            icon: const Icon(Icons.search),
+            onPressed: () {
+              showSearch(
+                context: context,
+                delegate: CustomSearchDelegate(),
+              );
+            },
+          ),
+        ],
       ),
-      body: ListView.builder(
-          itemCount: userData.length,
-          scrollDirection: Axis.vertical,
-          itemBuilder: (BuildContext context, int index) {
-            return ListTile(
-              leading: Text(userData[index].type),
-              trailing: Text(userData[index].name),
-              title: Text(userData[index].email),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Text(
-                  //   "lat = ${userData[index].lat} ",
-                  //   style: TextStyle(color: Colors.green, fontSize: 15),
-                  // ),
-                  // Text(
-                  //   "lng = ${userData[index].long} ",
-                  //   style: TextStyle(color: Colors.green, fontSize: 15),
-                  // ),
-                  Text(
-                    "address = ${userData[index].address} ",
-                    style: TextStyle(color: Colors.green, fontSize: 15),
-                  ),
-                ],
+      body: Column(
+        children: [
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.search),
+              title: TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                      hintText: 'Search', border: InputBorder.none),
+                  onChanged: (value) {
+                    setState(() {
+                      _searchResult = value;
+                      usersFiltered = userData
+                          .where((user) =>
+                              user.name.contains(_searchResult) ||
+                              user.email.contains(_searchResult) ||
+                              user.address.contains(_searchResult))
+                          .toList();
+                    });
+                  }),
+              trailing: IconButton(
+                icon: const Icon(Icons.cancel),
+                onPressed: () {
+                  setState(() {
+                    controller.clear();
+                    _searchResult = '';
+                    usersFiltered = userData;
+                  });
+                },
               ),
-            );
-          }),
+            ),
+          ),
+          usersFiltered.isNotEmpty
+              ? TableComponent.buildTableComponen(
+                  context: context, userData: usersFiltered)
+              : const Expanded(
+                  child: Center(
+                  child: CircularProgressIndicator(),
+                )),
+        ],
+      ),
+      // Container(
+      //   width: MediaQuery.of(context).size.width,
+      //   child: DataTable(
+      //     headingRowColor: MaterialStateProperty.all(Colors.green),
+      //     columns: const [
+      //       //       DataColumn(
+      //       //   label: Expanded(
+      //       //     child: Text(
+      //       //       'Type',
+      //       //       style: TextStyle(fontStyle: FontStyle.italic),
+      //       //     ),
+      //       //   ),
+      //       // ),
+      //       DataColumn(
+      //         label: Expanded(
+      //           child: Text(
+      //             'Name',
+      //             style: TextStyle(
+      //                 fontStyle: FontStyle.italic, color: Colors.white),
+      //           ),
+      //         ),
+      //       ),
+      //       DataColumn(
+      //         label: Expanded(
+      //           child: Text(
+      //             'Address',
+      //             style: TextStyle(
+      //                 fontStyle: FontStyle.italic, color: Colors.white),
+      //           ),
+      //         ),
+      //       ),
+      //       DataColumn(
+      //         label: Expanded(
+      //           child: Text(
+      //             'Email',
+      //             style: TextStyle(
+      //                 fontStyle: FontStyle.italic, color: Colors.white),
+      //           ),
+      //         ),
+      //       ),
+      //     ],
+      //     rows: userData.map((item) {
+      //       return DataRow(
+      //           color: MaterialStateProperty.all(Colors.lightBlueAccent),
+      //           cells: [
+      //             DataCell(Container(
+      //                 // width: (MediaQuery.of(context).size.width / 10) * 3,
+      //                 child: Text(item.name,
+      //                     style: const TextStyle(
+      //                         color: Colors.red, fontSize: 12)))),
+
+      //             // DataCell(Icon(Icons.power)),
+      //             DataCell(Container(
+      //               // width: (MediaQuery.of(context).size.width / 10) * 3,
+      //               child: Text(item.address,
+      //                   style:
+      //                       const TextStyle(color: Colors.red, fontSize: 12)),
+      //             )),
+      //             DataCell(Container(
+      //               width: (MediaQuery.of(context).size.width / 10) * 2,
+      //               child: Text(item.email,
+      //                   style:
+      //                       const TextStyle(color: Colors.red, fontSize: 12)),
+      //             ))
+      //           ]);
+      //     }).toList(),
+      //   ),
+      // ),
+
+      //  ListView.builder(
+      //     itemCount: userData.length,
+      //     scrollDirection: Axis.vertical,
+      //     itemBuilder: (BuildContext context, int index) {
+      //       return ListTile(
+      //         leading: Text(userData[index].type),
+      //         trailing: Text(userData[index].name),
+      //         title: Text(userData[index].email),
+      //         subtitle: Column(
+      //           crossAxisAlignment: CrossAxisAlignment.start,
+      //           children: [
+      //             // Text(
+      //             //   "lat = ${userData[index].lat} ",
+      //             //   style: TextStyle(color: Colors.green, fontSize: 15),
+      //             // ),
+      //             // Text(
+      //             //   "lng = ${userData[index].long} ",
+      //             //   style: TextStyle(color: Colors.green, fontSize: 15),
+      //             // ),
+      //             Text(
+      //               "address = ${userData[index].address} ",
+      //               style: TextStyle(color: Colors.green, fontSize: 15),
+      //             ),
+      //           ],
+      //         ),
+      //       );
+      //     }),
 
       // Row(
       //   mainAxisAlignment: MainAxisAlignment.center,
@@ -205,7 +295,7 @@ class _HomePageState extends State<HomePage> {
             backgroundColor: Colors.blueAccent,
           ));
           Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (context) => LoginPage()),
+              MaterialPageRoute(builder: (context) => const LoginPage()),
               (Route<dynamic> route) => false);
         },
         tooltip: 'Sign out',
